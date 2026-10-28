@@ -1,0 +1,37 @@
+#!/bin/bash
+# The desktop process keeps its portal session (and KDE's "remote control
+# active" indicator) open after the client leaves; the daemon respawns an idle
+# one with no portal session, so ending it once nobody is connected releases it.
+#
+# HostEventLogger ("chromoting" syslog id) only logs connect/disconnect for
+# authenticated clients, so failed PIN attempts don't count. The quiet period
+# covers a reconnect, where the old session's disconnect is logged before the
+# new one's connect.
+quiet=${CRD_REAPER_QUIET:-10}
+clients=0
+pending=
+
+if [[ ${1:-} == - ]]; then
+    exec 3<&0  # tests feed events on stdin
+else
+    exec 3< <(journalctl -f -n0 -o cat -u chrome-remote-desktop.service -t chromoting)
+fi
+
+while :; do
+    if IFS= read -r -u 3 -t "$quiet" line; then
+        case $line in
+            "Client connected: "*)
+                clients=$((clients + 1)) ;;
+            "Client disconnected: "*)
+                ((clients > 0)) && clients=$((clients - 1))
+                ((clients == 0)) && pending=1 ;;
+        esac
+    elif (($? > 128)); then
+        if [[ $pending ]] && ((clients == 0)); then
+            pkill -f '^/opt/google/chrome-remote-desktop/chrome-remote-desktop-host --type=desktop'
+        fi
+        pending=
+    else
+        exit 1  # journalctl went away; systemd restarts us
+    fi
+done

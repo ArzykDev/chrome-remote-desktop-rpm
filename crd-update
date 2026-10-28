@@ -1,0 +1,131 @@
+#!/bin/bash
+# Auto-update for the repackaged Chrome Remote Desktop host. Run by
+# chrome-remote-desktop-update.service:
+#   install  (root, runs first) dnf install an RPM built by an earlier run,
+#            once no session is active; independent of Google being reachable
+#   build    (sandboxed DynamicUser) verify Google's signed apt metadata,
+#            download the newest .deb, build the RPM into the cache
+set -euo pipefail
+
+repo=https://dl.google.com/linux/chrome-remote-desktop/deb
+key_url=https://dl.google.com/linux/linux_signing_key.pub
+# Google Linux Packages Signing Authority primary key; signing subkeys rotate yearly.
+google_fpr=EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796
+recipe=$(cd "$(dirname "$0")" && pwd)
+cache=${CACHE_DIRECTORY:-/var/cache/crd-update}
+out=$cache/out
+
+installed() {  # installed FORMAT: query the installed package, 0 if absent
+    if rpm -q --quiet chrome-remote-desktop; then
+        rpm -q --qf "$1" chrome-remote-desktop
+    else
+        echo 0
+    fi
+}
+
+newer() {  # newer A B: A > B; arguments are validated version[-release] strings
+    [[ $(rpm --eval "%{lua:print(rpm.vercmp('$1', '$2'))}") == 1 ]]
+}
+
+session_active() {
+    # shortcut: only the multi-process host has a per-session peer_connection
+    # process; a legacy chrome-remote-desktop@ session would go unnoticed.
+    pgrep -f '^/opt/google/chrome-remote-desktop/chrome-remote-desktop-host --type=peer_connection' >/dev/null
+}
+
+latest_stanza() {  # latest_stanza PACKAGES: newest "version filename sha256"
+    awk -v RS= '{
+        p = v = f = s = ""
+        n = split($0, l, "\n")
+        for (i = 1; i <= n; i++) {
+            if (l[i] ~ /^Package: /) p = substr(l[i], 10)
+            if (l[i] ~ /^Version: /) v = substr(l[i], 10)
+            if (l[i] ~ /^Filename: /) f = substr(l[i], 11)
+            if (l[i] ~ /^SHA256: /) s = substr(l[i], 9)
+        }
+        # Same normalisation as build.sh, before sorting: RPM Version
+        # cannot hold a Debian epoch or revision.
+        sub(/^[0-9]+:/, "", v)
+        sub(/-.*$/, "", v)
+        if (p == "chrome-remote-desktop") print v, f, s
+    }' "$1" | sort -V -k1,1 | tail -1
+}
+
+build() {
+    work=$(mktemp -d)  # global: the EXIT trap runs after build() returns
+    trap 'rm -rf "$work"' EXIT
+    export GNUPGHOME=$work/gnupg HOME=$work
+    mkdir -m700 "$GNUPGHOME"
+
+    curl -fsS --proto =https -o "$work/key.pub" "$key_url"
+    gpg -q --batch --import "$work/key.pub"
+    gpg -q --batch --export "$google_fpr" > "$work/google.gpg"
+    [[ -s $work/google.gpg ]] || { echo "pinned Google key $google_fpr not in $key_url" >&2; exit 1; }
+
+    curl -fsS --proto =https -o "$work/Release" "$repo/dists/stable/Release"
+    curl -fsS --proto =https -o "$work/Release.gpg" "$repo/dists/stable/Release.gpg"
+    gpgv -q --keyring "$work/google.gpg" "$work/Release.gpg" "$work/Release"
+
+    local packages_sha
+    packages_sha=$(awk '$3 == "main/binary-amd64/Packages" && length($1) == 64 { print $1 }' "$work/Release")
+    [[ $packages_sha =~ ^[0-9a-f]{64}$ ]] || { echo "no SHA256 for Packages in Release" >&2; exit 1; }
+    curl -fsS --proto =https -o "$work/Packages" "$repo/dists/stable/main/binary-amd64/Packages"
+    echo "$packages_sha  $work/Packages" | sha256sum -c --quiet
+
+    local version filename deb_sha
+    read -r version filename deb_sha < <(latest_stanza "$work/Packages")
+    [[ $version =~ ^[0-9][0-9.]*$ ]] || { echo "unexpected version: $version" >&2; exit 1; }
+    [[ $filename =~ ^pool/main/c/chrome-remote-desktop/chrome-remote-desktop_[A-Za-z0-9.+~:-]+_amd64\.deb$ ]] \
+        || { echo "unexpected filename: $filename" >&2; exit 1; }
+    [[ $deb_sha =~ ^[0-9a-f]{64}$ ]] || { echo "no SHA256 for $filename" >&2; exit 1; }
+
+    local current
+    current=$(installed '%{VERSION}')
+    if ! newer "$version" "$current"; then
+        echo "up to date ($current)"
+        rm -rf "$out"  # drop a deferred build that a manual install superseded
+        return
+    fi
+    if compgen -G "$out/chrome-remote-desktop-$version-*.rpm" >/dev/null; then
+        echo "$version already built, waiting for install"
+        return
+    fi
+
+    echo "building $version (installed: $current)"
+    curl -fsS --proto =https -o "$work/crd.deb" "$repo/$filename"
+    echo "$deb_sha  $work/crd.deb" | sha256sum -c --quiet
+    rm -rf "$out"
+    "$recipe/build.sh" "$work/crd.deb" "$out"
+}
+
+install() {
+    local rpm
+    rpm=$(compgen -G "$out/chrome-remote-desktop-*.rpm" | sort -V | tail -1) || { echo "nothing to install"; return; }
+    if ! newer "$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$rpm")" "$(installed '%{VERSION}-%{RELEASE}')"; then
+        echo "discarding ${rpm##*/}: not newer than the installed package"
+        rm -rf "$out"
+        return
+    fi
+    if session_active; then
+        echo "session active, deferring install of ${rpm##*/}"
+        return
+    fi
+    echo "installing ${rpm##*/}"
+    # -C skips the metadata refresh, keeping the gap after the session check short.
+    if ! dnf install -y -C --setopt=install_weak_deps=False "$rpm"; then
+        if session_active; then
+            echo "session started, deferring install of ${rpm##*/}"
+            return
+        fi
+        dnf install -y --setopt=install_weak_deps=False "$rpm"
+    fi
+    rm -rf "$out"
+}
+
+[[ ${BASH_SOURCE[0]} == "$0" ]] || return 0  # sourced by tests
+
+case ${1:-} in
+    install) install ;;
+    build) build ;;
+    *) echo "usage: $0 install|build" >&2; exit 2 ;;
+esac

@@ -1,0 +1,4 @@
+u _crd_network          - "Chrome Remote Desktop network process"
+u _crd_peer_connection  - "Chrome Remote Desktop peer connection process"
+u _crd_crashpad         - "Chrome Remote Desktop crash handler"
+g chrome-remote-desktop -

@@ -1,0 +1,20 @@
+[Unit]
+Description=Build and install Chrome Remote Desktop updates from Google's signed apt repo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+CacheDirectory=crd-update
+# Install (as root, "+") before build, so an RPM built by an earlier run still
+# lands when Google is unreachable; a fresh build installs on the next run.
+ExecStart=+/usr/share/chrome-remote-desktop-rpm/crd-update install
+ExecStart=/usr/share/chrome-remote-desktop-rpm/crd-update build
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+NoNewPrivileges=yes

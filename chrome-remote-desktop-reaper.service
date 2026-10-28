@@ -1,0 +1,9 @@
+[Unit]
+Description=End Chrome Remote Desktop portal sessions on client disconnect
+BindsTo=chrome-remote-desktop.service
+After=chrome-remote-desktop.service
+
+[Service]
+ExecStart=/opt/google/chrome-remote-desktop/crd-session-reaper
+Restart=always
+RestartSec=5
