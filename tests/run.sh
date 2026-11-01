@@ -72,9 +72,15 @@ if [[ $deb ]]; then
     cp "$lib" "$tmp/orig.so"
     python3 "$root/patch-monitor-source.py" "$lib" >/dev/null && got=patched || got=refused
     check "monitor patch applies" patched "$got"
-    check "patch changes exactly 7 bytes" 7 "$(cmp -l "$tmp/orig.so" "$lib" | wc -l)"
+    check "patch changes exactly 8 bytes" 8 "$(cmp -l "$tmp/orig.so" "$lib" | wc -l)"
+    check "PipeWire fd test je became jmp" 1 "$(cmp -l "$tmp/orig.so" "$lib" | grep -c ' 164 353$')"
     python3 "$root/patch-monitor-source.py" "$lib" >/dev/null 2>&1 && got=patched || got=refused
     check "patcher refuses an already patched lib" refused "$got"
+    # Undo only the jmp, so the types-select check alone has to refuse.
+    off=$(cmp -l "$tmp/orig.so" "$lib" | awk '$3 == 353 {print $1 - 1}')
+    printf '\x74' | dd of="$lib" bs=1 seek="$off" conv=notrunc status=none
+    python3 "$root/patch-monitor-source.py" "$lib" >/dev/null 2>&1 && got=patched || got=refused
+    check "patcher refuses a lib with only the types select patched" refused "$got"
 fi
 
 exit $fail

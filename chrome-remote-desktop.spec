@@ -61,8 +61,10 @@ official .deb. Adds a Fedora PAM stack and sysusers config, and drops the
 Debian-only apt repository cron job.
 
 Two KDE fixes: libremoting_core.so is byte-patched to capture the real
-monitors instead of creating a virtual output, and a reaper service ends the
-portal session when the client disconnects.
+monitors instead of creating a virtual output (each monitor's stream then
+connects to the user's default PipeWire socket rather than sharing the
+portal's restricted one), and a reaper service ends the portal session when
+the client disconnects.
 
 An hourly timer verifies Google's signed apt metadata, rebuilds this package
 from the recipe in %{recipe_dir} when a new version appears, and installs it
@@ -156,6 +158,10 @@ fi
 %{_sysusersdir}/chrome-remote-desktop.conf
 
 %changelog
+* Sun Nov 01 2026 ArzykDev <hello@arzyk.me> - 157.0.8103.19-6
+- Give each screencast stream its own PipeWire connection; two
+  monitors hung the host
+
 * Wed Oct 28 2026 ArzykDev <hello@arzyk.me> - 157.0.8103.19-5
 - Make crd-update sourceable and give the reaper a stdin mode for tests
 

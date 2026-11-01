@@ -41,7 +41,7 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
 |------|------|
 | `chrome-remote-desktop.spec` | repackaging; `%bcond_without monitor_patch`; generates the `extras.conf` drop-in (`Wants=` reaper + timer) |
 | `build.sh` | version normalisation, patch probe, rpmbuild |
-| `patch-monitor-source.py` | VIRTUAL→MONITOR byte patch, anchored on the "ScreenCast.SelectSources failed" xrefs |
+| `patch-monitor-source.py` | VIRTUAL→MONITOR byte patch (anchored on the "ScreenCast.SelectSources failed" xrefs) and the per-stream PipeWire connection patch (anchored on "Failed to connect PipeWire context") |
 | `crd-session-reaper` + `.service` | kills the idle `--type=desktop` process after the last authenticated client leaves |
 | `crd-update` + `chrome-remote-desktop-update.{service,timer}` | hourly: `install` (root, first), then `build` (DynamicUser) |
 | `tests/run.sh` | the fast checks above; `crd-update` is sourceable, and the reaper reads stdin with `-` |
@@ -59,6 +59,12 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
 - **Reaper input:** connect/disconnect lines come from the `chromoting` syslog identifier
   (HostEventLogger), which logs only authenticated clients. `peer_session_impl` logs
   "Client disconnected" for failed PINs too; don't match on it.
+- **Multi-monitor needs one PipeWire connection per stream.** With MONITOR, KDE returns a
+  stream per screen; webrtc connects each via `pw_context_connect_fd` on a dup of the same
+  portal fd, and the second `pw_core` sync never completes (host hangs after one "Stream N
+  added"). The patcher forces the `pw_context_connect` (default socket) branch. Don't try
+  `multiple: false` instead: KDE then sends one workspace stream with no `mapping_id`, and
+  every pointer move is dropped ("No absolute pointer for the requested region").
 - **Interactive shells may export `SYSTEMD_COLORS=1`,** making `journalctl -o cat` show ANSI
   escapes that are not in the stored message.
 - **The portal app ID is `""`,** because the daemon moves the desktop process into

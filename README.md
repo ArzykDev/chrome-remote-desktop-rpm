@@ -21,9 +21,11 @@ copying, modifying or distributing the software. Don't publish built RPMs.
   xdg-desktop-portal RemoteDesktop and ScreenCast portals, with libei for input.
 - **Captures your real monitors.** Upstream asks the portal for a *virtual* screen. On KDE that
   adds a new output, and KScreen then re-enables monitors you had turned off.
-  `patch-monitor-source.py` changes 7 bytes in `libremoting_core.so` so the host requests
-  `MONITOR` instead. If a future release changes that code, the patcher refuses and the build
-  continues without it (virtual-monitor mode) instead of holding back the update.
+  `patch-monitor-source.py` changes 8 bytes in `libremoting_core.so` so the host requests
+  `MONITOR` instead, and gives each monitor's stream its own PipeWire connection (sharing
+  one hangs the host with two or more monitors). If a future release changes that code, the
+  patcher refuses and the build continues without it (virtual-monitor mode) instead of
+  holding back the update.
 - **Releases the portal session on disconnect.** Upstream keeps the session (and KDE's
   "remote control active" indicator) open after the client leaves. `crd-session-reaper`
   ends the idle desktop process 10 s after the last authenticated client disconnects.
