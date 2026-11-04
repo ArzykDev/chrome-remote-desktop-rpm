@@ -28,6 +28,7 @@ Source7:        build.sh
 Source8:        crd-update
 Source9:        chrome-remote-desktop-update.service
 Source10:       chrome-remote-desktop-update.timer
+Source11:       chrome-remote-desktop-pipewire.conf
 ExclusiveArch:  x86_64
 
 BuildRequires:  binutils
@@ -99,7 +100,8 @@ install -Dm644 %{SOURCE2} %{buildroot}%{_sysusersdir}/chrome-remote-desktop.conf
 install -dm755 %{buildroot}%{_sysconfdir}/chrome-remote-desktop
 install -Dm755 %{SOURCE4} %{buildroot}%{crd_dir}/crd-session-reaper
 install -Dm644 -t %{buildroot}%{_unitdir} %{SOURCE5} %{SOURCE9} %{SOURCE10}
-install -Dm644 -t %{buildroot}%{recipe_dir} %{SOURCE1} %{SOURCE2} %{SOURCE5} %{SOURCE6} %{SOURCE9} %{SOURCE10}
+install -Dm644 %{SOURCE11} %{buildroot}%{_datadir}/pipewire/client.conf.d/chrome-remote-desktop.conf
+install -Dm644 -t %{buildroot}%{recipe_dir} %{SOURCE1} %{SOURCE2} %{SOURCE5} %{SOURCE6} %{SOURCE9} %{SOURCE10} %{SOURCE11}
 install -Dm755 -t %{buildroot}%{recipe_dir} %{SOURCE3} %{SOURCE4} %{SOURCE7} %{SOURCE8}
 # Pull the reaper and updater in with the daemon, so upgrades need no enable step.
 install -dm755 %{buildroot}%{_unitdir}/chrome-remote-desktop.service.d
@@ -154,10 +156,15 @@ fi
 %{recipe_dir}
 %{_userunitdir}/chrome-remote-desktop-environment.service
 %{_datadir}/wireplumber/wireplumber.conf.d/chrome-remote-desktop.conf
+%{_datadir}/pipewire/client.conf.d/chrome-remote-desktop.conf
 %{_datadir}/applications/crd-url-forwarder.desktop
 %{_sysusersdir}/chrome-remote-desktop.conf
 
 %changelog
+* Wed Nov 04 2026 ArzykDev <hello@arzyk.me> - 157.0.8103.19-7
+- Stop capture streams falling back to the webcam when their
+  screencast node is briefly missing
+
 * Sun Nov 01 2026 ArzykDev <hello@arzyk.me> - 157.0.8103.19-6
 - Give each screencast stream its own PipeWire connection; two
   monitors hung the host

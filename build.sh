@@ -21,7 +21,7 @@ version=${version%%-*}
 [[ $version =~ ^[0-9][0-9.]*$ ]] || { echo "unexpected upstream version: $version" >&2; exit 1; }
 mkdir -p "$work/SOURCES"
 mv "$work/crd.deb" "$work/SOURCES/chrome-remote-desktop_${version}_amd64.deb"
-cp "$here"/{chrome-remote-desktop.{spec,pam,sysusers},patch-monitor-source.py,crd-session-reaper,crd-update,build.sh,*.service,*.timer} \
+cp "$here"/{chrome-remote-desktop.{spec,pam,sysusers},patch-monitor-source.py,crd-session-reaper,crd-update,build.sh,chrome-remote-desktop-pipewire.conf,*.service,*.timer} \
     "$work/SOURCES/"
 
 # Try the patch on a scratch copy first: if it refuses, build unpatched, since a

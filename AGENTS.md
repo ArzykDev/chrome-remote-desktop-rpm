@@ -32,7 +32,7 @@ No root is needed except for `dnf install`.
 
 ## Layout
 
-All recipe files sit at the root: the spec lists them as `Source1..10`, `build.sh`
+All recipe files sit at the root: the spec lists them as `Source1..11`, `build.sh`
 copies them into `SOURCES/`, and the RPM installs them into
 `/usr/share/chrome-remote-desktop-rpm/` for the updater. A new recipe file must be added
 in all three places (the spec `Source`/`%install` lines and the `cp` list in `build.sh`).
@@ -43,6 +43,7 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
 | `build.sh` | version normalisation, patch probe, rpmbuild |
 | `patch-monitor-source.py` | VIRTUAL→MONITOR byte patch (anchored on the "ScreenCast.SelectSources failed" xrefs) and the per-stream PipeWire connection patch (anchored on "Failed to connect PipeWire context") |
 | `crd-session-reaper` + `.service` | kills the idle `--type=desktop` process after the last authenticated client leaves |
+| `chrome-remote-desktop-pipewire.conf` | PipeWire client `stream.rules`: capture streams wait for their screencast node instead of falling back to the webcam |
 | `crd-update` + `chrome-remote-desktop-update.{service,timer}` | hourly: `install` (root, first), then `build` (DynamicUser) |
 | `tests/run.sh` | the fast checks above; `crd-update` is sourceable, and the reaper reads stdin with `-` |
 
@@ -65,6 +66,8 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
   added"). The patcher forces the `pw_context_connect` (default socket) branch. Don't try
   `multiple: false` instead: KDE then sends one workspace stream with no `mapping_id`, and
   every pointer move is dropped ("No absolute pointer for the requested region").
+- **Stream props belong in PipeWire's `client.conf.d`, not WirePlumber's.** WirePlumber's
+  `stream.rules` only feed its audio state restore; the linking policy never sees them.
 - **Interactive shells may export `SYSTEMD_COLORS=1`,** making `journalctl -o cat` show ANSI
   escapes that are not in the stored message.
 - **The portal app ID is `""`,** because the daemon moves the desktop process into
