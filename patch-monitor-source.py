@@ -60,11 +60,14 @@ def xrefs_to(string):
 xrefs = xrefs_to(b"ScreenCast.SelectSources failed\0")
 pw_xref = xrefs_to(b"Failed to connect PipeWire context\0")[0]
 # cmp edi,-1; je else; mov esi,F_DUPFD_CLOEXEC: the fd != kInvalidPipeWireFd test.
+# Since 159 the fd lives on the stack: cmp [rbp+d],-1; je; mov edi,[rbp+d]; mov esi,...
 base = pw_xref - 0x200
-fd_test = [m.start() for m in re.finditer(rb"\x83[\xf8-\xff]\xff\x74.\xbe\x06\x04\x00\x00", data[base:pw_xref], re.S)]
+fd_test = list(re.finditer(
+    rb"\x83(?:[\xf8-\xff]|\xbd(....))\xff(\x74).(?:\x8b\xbd\1)?\xbe\x06\x04\x00\x00", data[base:pw_xref], re.S
+))
 if len(fd_test) != 1:
     raise SystemExit(f"expected one PipeWire fd test before its error, found {len(fd_test)}")
-je_off = base + fd_test[0] + 3
+je_off = base + fd_test[0].start(2)
 
 lo = xrefs[0] - 0x400
 window = bytes(data[lo : xrefs[-1] + 0x400])

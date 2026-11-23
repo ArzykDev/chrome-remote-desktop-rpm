@@ -70,8 +70,9 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
   `stream.rules` only feed its audio state restore; the linking policy never sees them.
 - **Interactive shells may export `SYSTEMD_COLORS=1`,** making `journalctl -o cat` show ANSI
   escapes that are not in the stored message.
-- **The portal app ID is `""`,** because the daemon moves the desktop process into
-  `session-N.scope`.
+- **The portal app ID is `com.google.ChromeRemoteDesktop`** since 159 (Host.Registry.Register,
+  backed by the shipped `.desktop` file). Before that it was `""`, because the daemon moves
+  the desktop process into `session-N.scope`.
 - **Anything run under `pkexec` starts in `/root`,** so pass absolute paths.
 - **The first upstream release after a change is the first live run** of the install path
   (`dnf install` as root). Test changes to `crd-update install` carefully.

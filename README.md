@@ -59,13 +59,14 @@ Register the host:
 Skip KDE's "Allow remote control?" dialog (needed for unattended access):
 
 ```sh
-flatpak permission-set kde-authorized remote-desktop "" yes
+flatpak permission-set kde-authorized remote-desktop com.google.ChromeRemoteDesktop yes
 ```
 
-CRD's desktop process runs in your login session's scope, so the portal sees
-it with an empty app ID. Pre-authorizing `""` also lets other processes without an
-app ID (for example from SSH logins) use remote control without a prompt. Undo with
-`flatpak permission-remove kde-authorized remote-desktop ""`.
+Since 159 the host registers this app ID with the portal (the journal shows
+"Host.Registry.Register succeeded"). Before that it ran with an empty app ID and
+needed `""` authorized instead, which also let any other unidentified process
+(for example from SSH logins) use remote control without a prompt. Once on 159,
+drop that with `flatpak permission-remove kde-authorized remote-desktop ""`.
 
 ## Updates
 
@@ -94,7 +95,7 @@ RELEASE=5 ./build.sh && sudo dnf upgrade dist/chrome-remote-desktop-*.rpm
 ```sh
 sudo dnf remove chrome-remote-desktop
 sudo rm -rf /etc/chrome-remote-desktop
-flatpak permission-remove kde-authorized remote-desktop ""
+flatpak permission-remove kde-authorized remote-desktop com.google.ChromeRemoteDesktop
 ```
 
 Then remove the machine at <https://remotedesktop.google.com/access>.

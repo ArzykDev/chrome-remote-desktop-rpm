@@ -89,7 +89,10 @@ install -Dm644 -t %{buildroot}%{_sysconfdir}/opt/chrome/native-messaging-hosts \
     root/etc/opt/chrome/native-messaging-hosts/*.json
 install -Dm644 -t %{buildroot}%{_prefix}/lib/mozilla/native-messaging-hosts \
     root/usr/lib/mozilla/native-messaging-hosts/*.json
-install -Dm644 -t %{buildroot}%{_unitdir} root/lib/systemd/system/*.service
+# 159 moved the daemon unit from /lib to /usr/lib; the glob in %files would hide its loss.
+find root/lib/systemd/system root/usr/lib/systemd/system -name '*.service' 2>/dev/null \
+    -exec install -Dm644 -t %{buildroot}%{_unitdir} {} +
+test -f %{buildroot}%{_unitdir}/chrome-remote-desktop.service
 install -Dm644 -t %{buildroot}%{_userunitdir} root/usr/lib/systemd/user/*.service
 install -Dm644 -t %{buildroot}%{_datadir}/wireplumber/wireplumber.conf.d \
     root/usr/share/wireplumber/wireplumber.conf.d/*.conf
@@ -157,10 +160,16 @@ fi
 %{_userunitdir}/chrome-remote-desktop-environment.service
 %{_datadir}/wireplumber/wireplumber.conf.d/chrome-remote-desktop.conf
 %{_datadir}/pipewire/client.conf.d/chrome-remote-desktop.conf
-%{_datadir}/applications/crd-url-forwarder.desktop
+%{_datadir}/applications/*.desktop
 %{_sysusersdir}/chrome-remote-desktop.conf
 
 %changelog
+* Mon Nov 23 2026 ArzykDev <hello@arzyk.me> - 159.0.8154.7-1
+- Package every .desktop file; 159 adds com.google.ChromeRemoteDesktop
+  for portal app ID registration
+- Match the PipeWire fd test when the fd is spilled to the stack
+- Install units from /usr/lib too; 159 moved the daemon unit there
+
 * Wed Nov 04 2026 ArzykDev <hello@arzyk.me> - 157.0.8103.19-7
 - Stop capture streams falling back to the webcam when their
   screencast node is briefly missing
