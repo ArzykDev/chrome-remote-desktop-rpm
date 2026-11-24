@@ -1,38 +1,43 @@
 # AGENTS.md
 
 A recipe that repackages Google's Chrome Remote Desktop host `.deb` as a Fedora RPM,
-with two KDE fixes (a monitor byte patch and a portal session reaper) and a signed
-self-updater. See README.md for the user-facing picture.
+with two KDE fixes (a monitor byte patch and a portal session reaper), a self-updater
+that follows signed release tags, and a CI workflow that watches upstream. See README.md for the user-facing picture.
 
 ## Hard rules
 
 - **Never commit, upload or publish built RPMs, `.deb`s or extracted binaries**
-  (no release assets, CI artifacts or package repos). Google's ToS forbids redistribution;
+  (no release assets, CI artifacts, package repos, or binary dumps in public CI logs). Google's ToS forbids redistribution;
   this repo holds only our own files. `dist/` is gitignored.
-- The updater must only fetch from `dl.google.com`, and must verify the chain
-  `Release.gpg` → `Release` → `Packages` SHA-256 → `.deb` SHA-256 before building.
-  Don't loosen the pinned primary fingerprint, version/filename validation or `--proto =https`.
-- A failing monitor patch must not block a security update: `build.sh` probes the
-  patcher and builds `--without monitor_patch` only when the patcher refuses. Any other
-  build failure must still fail.
+- The updater fetches only from `dl.google.com` and this repo's GitHub URL, over https.
+  It builds only the newest `v<version>-<release>` tag, and only after `verify_tag` passes:
+  an SSH signature by a key in the *installed* `allowed_signers`, and a signed tag name equal
+  to the ref. It then verifies `Release.gpg` → `Release` → `Packages` SHA-256 → `.deb`
+  SHA-256. Don't loosen the pinned fingerprint, the signer check, version/tag/filename
+  validation or `--proto =https`, and never fall back to an older tag when the newest fails.
+- The tag-signing key is effectively root on the box: a tag it signs gets built and installed.
+- A refusing monitor patch fails the build. Every version is approved by a human tag and
+  CI sees the refusal first, so there is no unattended fallback.
 
 ## Commands
 
 ```sh
 ./build.sh                         # download current .deb, build into dist/ (RELEASE=1)
+git tag -s v159.0.8154.7-2 && git push origin v159.0.8154.7-2   # approve: the box builds it
 RELEASE=5 ./build.sh               # bump RELEASE for any recipe change to an already-built version
 ./build.sh path/to.deb outdir      # how crd-update calls it
-tests/run.sh                       # fast checks: version compare, Packages parser, reaper
+tests/run.sh                       # fast checks: version compare, Packages parser, tags, reaper
 tests/run.sh path/to/crd.deb       # also checks the monitor patch against that release
 shellcheck -S warning crd-update crd-session-reaper build.sh tests/run.sh
 ```
 
-Building needs `rpm-build`, `systemd-rpm-macros`, `binutils`, `python3` and `curl`.
+Building needs `rpm-build`, `systemd-rpm-macros`, `binutils`, `python3` and `curl`;
+the tests also need `git` and `ssh-keygen`.
 No root is needed except for `dnf install`.
 
 ## Layout
 
-All recipe files sit at the root: the spec lists them as `Source1..11`, `build.sh`
+All recipe files sit at the root: the spec lists them as `Source1..12`, `build.sh`
 copies them into `SOURCES/`, and the RPM installs them into
 `/usr/share/chrome-remote-desktop-rpm/` for the updater. A new recipe file must be added
 in all three places (the spec `Source`/`%install` lines and the `cp` list in `build.sh`).
@@ -44,7 +49,9 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
 | `patch-monitor-source.py` | VIRTUAL→MONITOR byte patch (anchored on the "ScreenCast.SelectSources failed" xrefs) and the per-stream PipeWire connection patch (anchored on "Failed to connect PipeWire context") |
 | `crd-session-reaper` + `.service` | kills the idle `--type=desktop` process after the last authenticated client leaves |
 | `chrome-remote-desktop-pipewire.conf` | PipeWire client `stream.rules`: capture streams wait for their screencast node instead of falling back to the webcam |
-| `crd-update` + `chrome-remote-desktop-update.{service,timer}` | hourly: `install` (root, first), then `build` (DynamicUser) |
+| `crd-update` + `chrome-remote-desktop-update.{service,timer}` | hourly: `install` (root, first), then `build` (DynamicUser) of the newest signed tag; `fetch_index`/`fetch_deb`/`stanza`/`pick_tag` are reused by CI and tests |
+| `allowed_signers` | the SSH keys whose tags the updater builds (`ssh-keygen` format, `namespaces="git"`) |
+| `.github/workflows/upstream.yml` | every 6 h: build a new upstream in `fedora:latest`, file an issue; on a new failure, claude-code-action pushes a `claude/upstream-<version>` branch |
 | `tests/run.sh` | the fast checks above; `crd-update` is sourceable, and the reaper reads stdin with `-` |
 
 ## Gotchas
@@ -55,6 +62,17 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
   because it is top-level.
 - **No apostrophes in comments inside the single-quoted awk program** in `crd-update`. They
   end the quote.
+- **`newer()` evaluates its arguments as Lua.** Check anything from the network (tag names)
+  against `tag_re` first; `pick_tag` does.
+- **A tag signature covers the name inside the tag object, not the ref.** A signed object can
+  be republished under a higher ref name; `verify_tag` compares the two.
+- **`install()` discards RPMs without `allowed_signers`.** That blocks RPMs built by the
+  pre-tag updater, which would otherwise bring it back.
+- **GitHub disables the scheduled workflow after 60 days without repo activity** (it emails
+  first). Re-enable it in the Actions tab.
+- **The CI fix job uses `CLAUDE_CODE_OAUTH_TOKEN`** (from `claude setup-token`) and runs only
+  for a newly filed failure issue. A final step deletes any `claude/*` branch that adds
+  binary files.
 - **Session detection:** a `--type=peer_connection` process exists only while a client is
   connected. The legacy `chrome-remote-desktop@` host has none (a known limit).
 - **Reaper input:** connect/disconnect lines come from the `chromoting` syslog identifier
@@ -74,7 +92,7 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
   backed by the shipped `.desktop` file). Before that it was `""`, because the daemon moves
   the desktop process into `session-N.scope`.
 - **Anything run under `pkexec` starts in `/root`,** so pass absolute paths.
-- **The first upstream release after a change is the first live run** of the install path
+- **The first tag after a change is the first live run** of the install path
   (`dnf install` as root). Test changes to `crd-update install` carefully.
 
 ## Testing a change
@@ -89,4 +107,5 @@ in all three places (the spec `Source`/`%install` lines and the `cp` list in `bu
 ## Git
 
 Conventional commits, 50/72. Bump the spec `%changelog` and use a new `RELEASE` for any
-change that affects the installed package.
+change that affects the installed package. The box picks it up only once the commit is
+tagged `v<version>-<RELEASE>` with a signed tag; tag only what you have tested on the box.

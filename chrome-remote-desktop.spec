@@ -4,7 +4,7 @@
 %global __strip /bin/true
 %global crd_dir /opt/google/chrome-remote-desktop
 %global recipe_dir %{_datadir}/chrome-remote-desktop-rpm
-# build.sh falls back to --without monitor_patch when the patcher refuses.
+# A patcher refusal fails the build; --without monitor_patch builds unpatched by hand.
 %bcond_without monitor_patch
 # Bundled libs are private ($ORIGIN rpath), so don't export or require them.
 %global __provides_exclude_from ^%{crd_dir}/.*$
@@ -29,6 +29,7 @@ Source8:        crd-update
 Source9:        chrome-remote-desktop-update.service
 Source10:       chrome-remote-desktop-update.timer
 Source11:       chrome-remote-desktop-pipewire.conf
+Source12:       allowed_signers
 ExclusiveArch:  x86_64
 
 BuildRequires:  binutils
@@ -38,7 +39,10 @@ Requires:       python3
 # The updater rebuilds this package from the recipe shipped in %%{recipe_dir}.
 Requires:       binutils
 Requires:       curl
+Requires:       git-core
 Requires:       gnupg2
+# ssh-keygen verifies release tags
+Requires:       openssh
 Requires:       rpm-build
 Requires:       systemd-rpm-macros
 Requires:       python3-dbus
@@ -67,9 +71,10 @@ connects to the user's default PipeWire socket rather than sharing the
 portal's restricted one), and a reaper service ends the portal session when
 the client disconnects.
 
-An hourly timer verifies Google's signed apt metadata, rebuilds this package
-from the recipe in %{recipe_dir} when a new version appears, and installs it
-when no session is active. Nothing is downloaded from anywhere but Google.
+An hourly timer looks for a newer release tag in the recipe's git repo,
+verifies its SSH signature against %{recipe_dir}/allowed_signers, rebuilds
+this package from the tagged recipe and the matching .deb from Google's
+signed apt repo, and installs it when no session is active.
 
 %prep
 %setup -c -T
@@ -104,7 +109,7 @@ install -dm755 %{buildroot}%{_sysconfdir}/chrome-remote-desktop
 install -Dm755 %{SOURCE4} %{buildroot}%{crd_dir}/crd-session-reaper
 install -Dm644 -t %{buildroot}%{_unitdir} %{SOURCE5} %{SOURCE9} %{SOURCE10}
 install -Dm644 %{SOURCE11} %{buildroot}%{_datadir}/pipewire/client.conf.d/chrome-remote-desktop.conf
-install -Dm644 -t %{buildroot}%{recipe_dir} %{SOURCE1} %{SOURCE2} %{SOURCE5} %{SOURCE6} %{SOURCE9} %{SOURCE10} %{SOURCE11}
+install -Dm644 -t %{buildroot}%{recipe_dir} %{SOURCE1} %{SOURCE2} %{SOURCE5} %{SOURCE6} %{SOURCE9} %{SOURCE10} %{SOURCE11} %{SOURCE12}
 install -Dm755 -t %{buildroot}%{recipe_dir} %{SOURCE3} %{SOURCE4} %{SOURCE7} %{SOURCE8}
 # Pull the reaper and updater in with the daemon, so upgrades need no enable step.
 install -dm755 %{buildroot}%{_unitdir}/chrome-remote-desktop.service.d
@@ -164,6 +169,11 @@ fi
 %{_sysusersdir}/chrome-remote-desktop.conf
 
 %changelog
+* Tue Nov 24 2026 ArzykDev <hello@arzyk.me> - 159.0.8154.7-2
+- Updater: build only versions approved by an SSH-signed release tag,
+  using that tag's recipe; refuse RPMs built by the old updater
+- Fail the build when the monitor patch no longer applies
+
 * Mon Nov 23 2026 ArzykDev <hello@arzyk.me> - 159.0.8154.7-1
 - Package every .desktop file; 159 adds com.google.ChromeRemoteDesktop
   for portal app ID registration

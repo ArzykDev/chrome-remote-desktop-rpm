@@ -1,0 +1,160 @@
+# Watches Google's apt repo for a CRD release newer than the newest release tag,
+# builds it with the recipe and files an issue either way. On failure Claude
+# drafts a fix branch. Nothing built or downloaded here is ever uploaded:
+# Google's ToS forbids redistributing the host.
+name: upstream
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build the current upstream even if a tag already covers it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency: upstream
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DEPS: git-core gh gawk rpm-build systemd-rpm-macros binutils python3 curl gnupg2 openssh
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      issue: ${{ steps.report.outputs.issue }}
+    steps:
+      - run: dnf -y -q install $DEPS
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Compare upstream with the newest release tag
+        id: check
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          source ./crd-update
+          mkdir "$RUNNER_TEMP/up"
+          fetch_index "$RUNNER_TEMP/up"
+          read -r version _ < <(stanza "$RUNNER_TEMP/up/Packages" latest)
+          tag=$(pick_tag < <(git ls-remote --tags --refs .))
+          echo "upstream $version, newest tag ${tag:-none}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ -z $tag || $FORCE == true ]] || { [[ $tag =~ $tag_re ]] && newer "$version" "${BASH_REMATCH[1]}"; }; then
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Test and build
+        id: build
+        if: steps.check.outputs.new
+        continue-on-error: true
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          source ./crd-update
+          fetch_deb "$RUNNER_TEMP/up" "$VERSION"
+          { tests/run.sh "$RUNNER_TEMP/up/crd.deb" && ./build.sh "$RUNNER_TEMP/up/crd.deb" "$RUNNER_TEMP/out"; } \
+              2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: File an issue
+        id: report
+        if: steps.check.outputs.new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.build.outcome }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          if [[ $OUTCOME == success ]]; then
+              title="Upstream $VERSION builds clean: test it, then tag v$VERSION-1"
+          else
+              title="Upstream $VERSION fails to build"
+          fi
+          if gh issue list -R "$GITHUB_REPOSITORY" --state all --search "\"$VERSION\" in:title" \
+                  --json title --jq '.[].title' | grep -qxF "$title"; then
+              echo "already filed: $title"
+              exit 0
+          fi
+          {
+              echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+              echo
+              echo '```'
+              tail -n 60 "$RUNNER_TEMP/build.log" 2>/dev/null
+              echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          url=$(gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/body.md")
+          echo "$url"
+          [[ $OUTCOME == success ]] || echo "issue=${url##*/}" >> "$GITHUB_OUTPUT"
+      - if: steps.build.outcome == 'failure'
+        run: exit 1
+
+  fix:
+    needs: build
+    # Only for a newly filed failure, so a red upstream costs one Claude run, not one every 6 hours.
+    if: always() && needs.build.outputs.issue
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    permissions:
+      contents: write
+      issues: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - run: dnf -y -q install $DEPS unzip
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fetch the verified upstream .deb
+        run: |
+          source ./crd-update
+          mkdir "$RUNNER_TEMP/up"
+          fetch_index "$RUNNER_TEMP/up"
+          fetch_deb "$RUNNER_TEMP/up" "$VERSION"
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh issue comment:*),Bash(gh issue view:*),Bash(./build.sh:*),Bash(tests/run.sh:*),Bash(python3:*),Bash(objdump:*),Bash(readelf:*),Bash(ar:*),Bash(cmp:*),Bash(rpm:*),Bash(rpmbuild:*),Bash(grep:*)"
+          prompt: |
+            Upstream Chrome Remote Desktop ${{ needs.build.outputs.version }} fails to build with this
+            repo's recipe. Issue #${{ needs.build.outputs.issue }} has the log; `gh issue view` it.
+            The verified upstream .deb is at ${{ runner.temp }}/up/crd.deb. Read AGENTS.md first and
+            follow it.
+
+            Find the cause and fix the recipe. Confirm with `tests/run.sh <deb>` and
+            `./build.sh <deb> ${{ runner.temp }}/out`.
+
+            This repo and its CI logs are public, and Google's ToS forbids redistributing the host:
+            never copy, commit or print Google's binaries, and never print large disassembly or
+            strings dumps. Keep every upstream file under ${{ runner.temp }}.
+
+            Commit the fix on a new branch claude/upstream-${{ needs.build.outputs.version }} and
+            push it. Never push to main and never create tags. Then comment on the issue with the
+            cause, the fix, and what CI cannot verify: there is no KDE session here, so the monitor
+            patch still needs a smoke test on the real host. If you cannot fix it, comment your
+            diagnosis instead.
+      - name: Refuse binaries on Claude branches
+        if: always()
+        run: |
+          git fetch -q origin '+refs/heads/claude/*:refs/remotes/origin/claude/*' || exit 0
+          bad=0
+          for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/); do
+              if git diff --numstat "origin/main...$b" | grep -qP '^-\t-\t'; then
+                  git push -q origin --delete "${b#origin/}"
+                  echo "::error::$b added binary files; branch deleted"
+                  bad=1
+              fi
+          done
+          exit $bad

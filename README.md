@@ -24,15 +24,15 @@ copying, modifying or distributing the software. Don't publish built RPMs.
   `patch-monitor-source.py` changes 8 bytes in `libremoting_core.so` so the host requests
   `MONITOR` instead, and gives each monitor's stream its own PipeWire connection (sharing
   one hangs the host with two or more monitors). If a future release changes that code, the
-  patcher refuses and the build continues without it (virtual-monitor mode) instead of
-  holding back the update.
+  patcher refuses and the build fails; `rpmbuild --without monitor_patch` builds an unpatched
+  (virtual-monitor) package by hand.
 - **Releases the portal session on disconnect.** Upstream keeps the session (and KDE's
   "remote control active" indicator) open after the client leaves. `crd-session-reaper`
   ends the idle desktop process 10 s after the last authenticated client disconnects.
-- **Updates itself.** Every installed RPM carries this recipe in
-  `/usr/share/chrome-remote-desktop-rpm/`. An hourly timer checks Google's apt repo,
-  verifies the signed metadata, rebuilds the RPM, and installs it once no session is
-  active. Nothing is fetched from anywhere but Google.
+- **Updates itself, once approved.** An hourly timer looks for a newer SSH-signed release
+  tag in this repo, verifies it, builds that tag's recipe against the matching `.deb` from
+  Google's signed apt repo, and installs it once no session is active. A CI workflow
+  watches Google's repo and files an issue when a new upstream release appears.
 
 ## Requirements
 
@@ -70,25 +70,37 @@ drop that with `flatpak permission-remove kde-authorized remote-desktop ""`.
 
 ## Updates
 
-`chrome-remote-desktop-update.timer` is started together with the daemon, so it
-needs no enabling. Each run:
+Upstream releases reach the machine only through a signed release tag
+`v<upstream version>-<release>`, for example `v159.0.8154.7-2`:
+
+1. `.github/workflows/upstream.yml` checks Google's repo every 6 hours. When upstream is
+   newer than the newest tag, it builds the release with the recipe and files an issue:
+   "builds clean, test it, then tag" or "fails to build". On a failure, Claude drafts a
+   fix on a `claude/upstream-<version>` branch. Nothing built in CI is uploaded.
+2. Test the build on the machine (`./build.sh` and `sudo dnf upgrade dist/*.rpm`), then
+   approve it with `git tag -s v<version>-<release> && git push origin v<version>-<release>`.
+   A recipe-only change gets the same treatment with a higher release.
+
+`chrome-remote-desktop-update.timer` starts together with the daemon. Each run:
 
 1. Installs an RPM built by an earlier run, if it is still newer than the installed
    package and no session is active.
-2. Fetches `Release` and `Release.gpg` and verifies them against Google's Linux signing
-   key, pinned by primary fingerprint `EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796`. It then
-   checks the SHA-256 of `Packages` and of the `.deb`.
-3. If the upstream version is newer, builds the RPM as a sandboxed `DynamicUser`.
+2. Lists this repo's tags and picks the newest well-formed one. If that is newer than the
+   installed package, it clones the tag and checks the signature against
+   `/usr/share/chrome-remote-desktop-rpm/allowed_signers` from the installed package. An
+   unsigned or foreign-signed newest tag fails the run; it never falls back to an older tag.
+3. Fetches `Release` and `Release.gpg`, verifies them against Google's Linux signing key
+   (pinned by primary fingerprint `EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796`), then checks
+   the SHA-256 of `Packages` and of the tagged version's `.deb`. Google keeps only the two
+   newest versions; if the tagged one is gone, the run waits for a newer tag.
+4. Builds the tagged recipe as a sandboxed `DynamicUser`.
 
-Logs: `journalctl -u chrome-remote-desktop-update`. There is no rollback. If a
-new upstream release installs but doesn't start, fix it at the machine.
+The signing key is effectively root on the machine: a tag it signs gets built and
+installed. To run this from a fork, change `git_url` in `crd-update` and put your own
+key in `allowed_signers`.
 
-Recipe changes (anything in this repo) are not picked up automatically. Rebuild
-with a higher `RELEASE` and install by hand:
-
-```sh
-RELEASE=5 ./build.sh && sudo dnf upgrade dist/chrome-remote-desktop-*.rpm
-```
+Logs: `journalctl -u chrome-remote-desktop-update`. There is no rollback; if a release
+installs but doesn't start, fix it at the machine.
 
 ## Uninstall
 

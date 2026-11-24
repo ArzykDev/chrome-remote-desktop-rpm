@@ -17,7 +17,8 @@ source "$root/crd-update"
 set +e
 
 for c in "158.0.1 157.0.8103.19 y" "157.0.8103.19 157.0.8103.19 n" "157.0.8103.100 157.0.8103.19 y" \
-         "155.0.8059.19 157.0.8103.19 n" "157.0.8103.19-4.fc44 157.0.8103.19-3.fc44 y" "157.0.8103.19 0 y"; do
+         "155.0.8059.19 157.0.8103.19 n" "157.0.8103.19-4.fc44 157.0.8103.19-3.fc44 y" "157.0.8103.19 0 y" \
+         "159.0.8154.7-2 159.0.8154.7-2.fc45 n" "159.0.8154.7-3 159.0.8154.7-2.fc45 y"; do
     set -- $c
     newer "$1" "$2" && got=y || got=n
     check "newer $1 > $2" "$3" "$got"
@@ -39,9 +40,46 @@ Version: 155.0.8059.19
 Filename: pool/main/c/chrome-remote-desktop/chrome-remote-desktop_155.0.8059.19_amd64.deb
 SHA256: cc
 EOF
-check "latest_stanza skips other packages, strips epoch/revision" \
+check "stanza latest skips other packages, strips epoch/revision" \
     "157.0.8103.19 pool/main/c/chrome-remote-desktop/chrome-remote-desktop_157.0.8103.19-1_amd64.deb bb" \
-    "$(latest_stanza "$tmp/Packages")"
+    "$(stanza "$tmp/Packages" latest)"
+check "stanza finds an exact version" \
+    "155.0.8059.19 pool/main/c/chrome-remote-desktop/chrome-remote-desktop_155.0.8059.19_amd64.deb cc" \
+    "$(stanza "$tmp/Packages" 155.0.8059.19)"
+check "stanza is empty for a version not in the index" "" "$(stanza "$tmp/Packages" 154.0.1)"
+
+check "pick_tag takes the newest well-formed tag, never evaluating the rest" v10.0-2 "$(pick_tag <<'EOF'
+x	refs/tags/v2.0-1
+x	refs/tags/v1'x-1
+x	refs/tags/v99-1;x
+x	refs/tags/v99')os.exit(1)--1
+x	refs/tags/v10.0-1
+x	refs/tags/v10.0-2
+x	refs/tags/latest
+EOF
+)"
+check "pick_tag is empty without release tags" "" "$(pick_tag <<< $'x\trefs/tags/foo')"
+
+# Release tags: throwaway keys, and no user or system git config (no 1Password signer).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+ssh-keygen -q -t ed25519 -N '' -C '' -f "$tmp/good"
+ssh-keygen -q -t ed25519 -N '' -C '' -f "$tmp/evil"
+printf 'test namespaces="git" %s\n' "$(cut -d' ' -f1,2 "$tmp/good.pub")" > "$tmp/allowed"
+# shellcheck disable=SC2034 # read by verify_tag
+signers=$tmp/allowed
+g() { git -C "$tmp/r" -c user.name=t -c user.email=t@t -c gpg.format=ssh "$@"; }
+git init -q "$tmp/r"
+g commit -q --allow-empty -m x
+g -c user.signingkey="$tmp/good.pub" tag -s -m x v1.0-1
+g -c user.signingkey="$tmp/evil.pub" tag -s -m x v2.0-1
+g tag -a -m x v3.0-1
+g update-ref refs/tags/v9.0-1 "$(g rev-parse v1.0-1)"  # a signed object replayed under a newer name
+git clone -q --depth 1 --branch v1.0-1 "file://$tmp/r" "$tmp/shallow" 2>/dev/null
+for c in "r v1.0-1 ok" "shallow v1.0-1 ok" "r v2.0-1 refused" "r v3.0-1 refused" "r v9.0-1 refused"; do
+    set -- $c
+    verify_tag "$tmp/$1" "$2" >/dev/null 2>&1 && got=ok || got=refused
+    check "verify_tag $2 ($1)" "$3" "$got"
+done
 
 # Reaper: a fake pkill records kills; events are fed on stdin with a 1 s quiet period.
 mkdir "$tmp/bin"

@@ -1,5 +1,5 @@
 [Unit]
-Description=Build and install Chrome Remote Desktop updates from Google's signed apt repo
+Description=Build and install signed Chrome Remote Desktop release tags
 After=network-online.target
 Wants=network-online.target
 
