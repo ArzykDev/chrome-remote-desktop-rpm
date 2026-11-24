@@ -122,6 +122,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # The container runs as root but the workspace belongs to the runner user, and checkout
+      # marks it safe only under a temporary HOME; without this, git refuses the repo.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Fetch the verified upstream .deb
         run: |
           source ./crd-update
@@ -156,10 +159,11 @@ jobs:
       - name: Refuse binaries on Claude branches
         if: always()
         run: |
-          git fetch -q origin '+refs/heads/claude/*:refs/remotes/origin/claude/*' || exit 0
+          git fetch -q origin '+refs/heads/claude/*:refs/remotes/origin/claude/*'
           bad=0
           for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/); do
-              if git diff --numstat "origin/main...$b" | grep -qP '^-\t-\t'; then
+              # Binary per git (NUL in the first 8000 bytes), or an upstream file by name.
+              if git diff --numstat "origin/main...$b" | grep -qP '^-\t-\t|\.(deb|rpm|so[.0-9]*|xz)$'; then
                   git push -q origin --delete "${b#origin/}"
                   echo "::error::$b added binary files; branch deleted"
                   bad=1
