@@ -14,9 +14,7 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
-  issues: write
+permissions: {}
 
 concurrency: upstream
 
@@ -30,13 +28,20 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Unpinned on purpose: the box runs current Fedora, and the build should track it.
     container: fedora:latest
+    permissions:
+      contents: read
+      issues: write
     outputs:
       version: ${{ steps.check.outputs.version }}
       issue: ${{ steps.report.outputs.issue }}
     steps:
-      - run: dnf -y -q install $DEPS
-      - uses: actions/checkout@v7
+      - run: |
+          # shellcheck disable=SC2086 # DEPS is a word list
+          dnf -y -q install $DEPS
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Compare upstream with the newest release tag
@@ -101,6 +106,7 @@ jobs:
     # Only for a newly filed failure, so a red upstream costs one Claude run, not one every 6 hours.
     if: always() && needs.build.outputs.issue
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container: fedora:latest
     permissions:
       contents: write
@@ -110,8 +116,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.build.outputs.version }}
     steps:
-      - run: dnf -y -q install $DEPS unzip
-      - uses: actions/checkout@v7
+      - run: |
+          # shellcheck disable=SC2086 # DEPS is a word list
+          dnf -y -q install $DEPS unzip
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Fetch the verified upstream .deb
@@ -120,7 +128,7 @@ jobs:
           mkdir "$RUNNER_TEMP/up"
           fetch_index "$RUNNER_TEMP/up"
           fetch_deb "$RUNNER_TEMP/up" "$VERSION"
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@eb56b6666facdbd501035f4a0269d8caee2e7a8b # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
